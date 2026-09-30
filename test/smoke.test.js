@@ -88,6 +88,7 @@ test('async image generation flow', async (t) => {
   const created = await res.json();
   assert.match(created.image_id, /^img_[0-9a-f]{32}$/);
   assert.equal(created.status, 'pending');
+  assert.equal(created.query_url, `/v1/images/generations/${created.image_id}`);
 
   // Poll until done.
   let task;
@@ -108,24 +109,13 @@ test('async image generation flow', async (t) => {
   assert.equal(seen.body.prompt, 'A cute baby sea otter');
   assert.equal(seen.body.stream, undefined);
 
-  // Image content endpoint.
-  assert.equal(task.image_urls[0], `/v1/images/generations/${created.image_id}/content/0`);
-  const img = await fetch(`${base}${task.image_urls[0]}`);
-  assert.equal(img.status, 200);
-  assert.equal(img.headers.get('content-type'), 'image/png');
-  assert.equal(Buffer.from(await img.arrayBuffer()).toString('base64'), TINY_PNG);
+  assert.equal(task.response.data[0].b64_json, TINY_PNG);
 
   // Raw upstream response.
   const raw = await fetch(`${base}/v1/images/generations/${created.image_id}?raw=1`);
   assert.equal((await raw.json()).data[0].b64_json, TINY_PNG);
 
-  // List.
-  const list = await (await fetch(`${base}/api/v1/images/generations`)).json();
-  assert.equal(list.count, 1);
-
-  // Delete.
-  const del = await fetch(`${base}/v1/images/generations/${created.image_id}`, { method: 'DELETE' });
-  assert.equal(del.status, 200);
-  const gone = await fetch(`${base}/v1/images/generations/${created.image_id}`);
-  assert.equal(gone.status, 404);
+  // Unknown id.
+  const missing = await fetch(`${base}/v1/images/generations/img_does_not_exist`);
+  assert.equal(missing.status, 404);
 });

@@ -5,9 +5,9 @@
 1. 客户端发来生图请求（参数、headers 原样透传给 ZenMux）；
 2. 服务**立刻返回一个 `image_id`**；
 3. 后台去调用 ZenMux 生图；
-4. 之后用这个 `image_id` 轮询查询结果，并可直接拿到图片二进制。
+4. 之后用这个 `image_id` 查询结果。
 
-零依赖，只用 Node 内置模块（需 Node >= 20，依赖内置 `fetch`）。
+只暴露两个接口。零依赖，只用 Node 内置模块（需 Node >= 20，依赖内置 `fetch`）。
 
 ## 快速开始
 
@@ -27,7 +27,7 @@ npm test           # 运行测试（用内存 mock 上游，不消耗额度）
 | `PORT` | `3000` | 监听端口 |
 | `ZENMUX_BASE_URL` | `https://zenmux.ai/api/v1` | 上游 OpenAI 兼容 base url |
 | `ZENMUX_API_KEY` | 空 | 兜底 key；**请求带了 `Authorization` 时以请求为准** |
-| `DATA_DIR` | `./data` | 任务/图片存储目录 |
+| `DATA_DIR` | `./data` | 任务存储目录 |
 | `UPSTREAM_TIMEOUT_MS` | `900000`（15 分钟） | 单次上游调用超时 |
 | `MAX_BODY_BYTES` | `33554432`（32MB） | 请求体大小上限 |
 | `FORCE_NON_STREAM` | `true` | 异步模式下强制上游非流式（会移除 body 里的 `stream`） |
@@ -71,7 +71,7 @@ Content-Type: application/json
 }
 ```
 
-### 2. 查询结果
+### 2. 查询状态/结果
 
 ```http
 GET /v1/images/generations/{image_id}
@@ -93,10 +93,11 @@ GET /v1/images/generations/{image_id}
     "output_format": "png",
     "data": [{ "b64_json": "..." }]
   },
-  "image_urls": ["/v1/images/generations/img_1f74a8e65bd54c39a79e092e8c3e38d3/content/0"],
   "error": null
 }
 ```
+
+- `?raw=1` → 只返回上游原始响应对象（`response` 字段的内容）。
 
 失败时：
 
@@ -112,22 +113,6 @@ GET /v1/images/generations/{image_id}
 }
 ```
 
-- `GET /v1/images/generations/{image_id}?raw=1` → 只返回上游原始响应对象。
-
-### 3. 获取图片二进制
-
-```http
-GET /v1/images/generations/{image_id}/content/{index}
-```
-
-`index` 对应 `response.data` 的下标（`n` 张图就是 0..n-1），返回 `image/png` / `image/jpeg` / `image/webp`。
-
-### 4. 其他
-
-- `GET /v1/images/generations?limit=20&status=succeeded` — 列出任务（不含完整 `response`）。
-- `DELETE /v1/images/generations/{image_id}` — 删除任务及其图片文件。
-- `GET /healthz` — 健康检查。
-
 ## curl 示例
 
 ```bash
@@ -142,28 +127,31 @@ curl -s -X POST $BASE/v1/images/generations \
 
 # => { "image_id": "img_...", ... }
 
-# 2) 轮询
+# 2) 查询
 ID=img_xxx
 curl -s $BASE/v1/images/generations/$ID
 
-# 3) 下载图片
-curl -s $BASE/v1/images/generations/$ID/content/0 -o output.png
+# 取出 base64 图片
+curl -s "$BASE/v1/images/generations/$ID" | node -e '
+  let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+    const t=JSON.parse(s);
+    if(t.response) require("fs").writeFileSync("output.png", Buffer.from(t.response.data[0].b64_json,"base64"));
+  });'
 ```
 
 ## 工作方式与注意事项
 
 - **透传**：请求体与请求头（除 `host` / `content-length` / `transfer-encoding` 等逐跳头）原样转发；`Authorization` 以请求自带的为准，其次才用 `ZENMUX_API_KEY`。`Content-Type` 固定为 `application/json`。
 - **异步**：提交接口不等待生图完成，后台调用完成后写入结果。因此上游耗时很长也不会占用客户端连接。
-- **持久化**：任务写在 `DATA_DIR/tasks/<image_id>.json`，图片写在 `DATA_DIR/images/`。重启后已存在的任务仍在，但重启时处于 `pending`/`processing` 的任务会被标记为 `failed`（原因 `server_restart`，上游无法续跑）。
+- **持久化**：任务写在 `DATA_DIR/tasks/<image_id>.json`（含完整上游响应，即 base64 图片）。重启后已完成的任务仍在；重启时处于 `pending`/`processing` 的任务会被标记为 `failed`（原因 `server_restart`，上游无法续跑）。
 - **流式**：为了异步语义，默认移除 `stream` 参数强制非流式；如需保留可设 `FORCE_NON_STREAM=false`（此时响应会以 `response.raw` 形式保存 SSE 文本，不建议）。
-- **存储量**：默认会保存完整 `b64_json` 响应，同时落盘图片文件，注意磁盘占用。
 
 ## 目录结构
 
 ```
 src/
   index.js    启动入口 & 优雅退出
-  app.js      HTTP 路由 / 异步任务调度 / 图片落盘
+  app.js      HTTP 路由 / 异步任务调度
   store.js    文件型任务存储
   zenmux.js   上游调用封装
   config.js   环境变量配置
