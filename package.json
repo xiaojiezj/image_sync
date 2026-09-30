@@ -1,0 +1,16 @@
+{
+  "name": "image-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Async proxy for the ZenMux OpenAI-compatible image generation API",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
