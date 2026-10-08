@@ -19,6 +19,14 @@ npm test           # 运行测试（用内存 mock 上游，不消耗额度）
 
 默认监听 `http://0.0.0.0:3000`。
 
+### 后台运行
+
+```bash
+nohup npm start > server.log 2>&1 &
+tail -f server.log          # 查看日志
+pkill -f "node src/index.js" # 停止服务
+```
+
 ## 配置（环境变量）
 
 | 变量 | 默认值 | 说明 |
